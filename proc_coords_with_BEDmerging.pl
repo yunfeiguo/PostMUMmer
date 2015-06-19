@@ -5,6 +5,7 @@ use warnings;
 use lib "/home/yunfeiguo/projects/SeqMule_dev/lib";
 use SeqMule::Utils;
 use threads;
+use threads::shared;
 
 die "Usage: $0 <indexed query FASTA> <1.coords 2.coords ...>\n" unless @ARGV >= 2;
 #    [S1]     [E1]  |     [S2]     [E2]  |  [LEN 1]  [LEN 2]  |  [% IDY]  |  [LEN R]  [LEN Q]  |  [COV R]  [COV Q]  | [TAGS]
@@ -18,6 +19,7 @@ my $query = shift @ARGV;
 my $idx = "$query.fai";
 die "no index: $idx\n" unless -e $idx;
 my %fa = &SeqMule::Utils::readFastaIdx($idx);
+my $total = scalar keys %fa;
 my @cleanQ; #files to be removed
 for my $i(@ARGV) {
     open IN,'<',$i or die "open($i): $!\n";
@@ -62,11 +64,14 @@ warn "All done\n";
 ###################################################################
 sub convert2BED {
     my $ref = shift;
+    my $count = 0;
     for my $i(keys %$ref) {
-	my $ref_bed = "$tmpdir/$i".rand($$).".ref.bed";
+	$count++;
+	warn "conversion:$count/$total done\n" if $count % 100 == 0;
 	next unless defined $ref->{$i}->{refMapping};
 	#the mapping may contain overlapping regions
 	#we should only use non-overlapped regions
+	my $ref_bed = "$tmpdir/$i".rand($$).".ref.bed";
 	my $ref_overlapBED = &SeqMule::Utils::genBED($ref->{$i}->{refMapping});
 	$ref->{$i}->{refBED} = &mergeBED($ref_overlapBED,0,$ref_bed);
 	push @cleanQ,$ref_overlapBED,$ref_bed;
@@ -74,18 +79,22 @@ sub convert2BED {
 }
 sub mergeBED_extractMaxMapping {
     my $ref = shift;
+    my $count = 0;
     for my $i(keys %$ref) {
+	$count++;
+	warn "merge and extractiong: $count/$total done\n" if $count % 100 == 0;
 	next unless defined $ref->{$i}->{refBED};
-	my $ref_bed = $ref->{$i}->{refBED};
-	my $out = &mergeBED($ref_bed,$gap); #merge with gap allowance
-	push @cleanQ,$out;
-	sub findMapping {
-	    my $query_ref = shift;
-	#maxMapping = [chr,start,end]
-	$ref->{$i}->{maxMapping} = 
-	my $threadObj = thread->create('findMax',[&SeqMule::Utils::readBED($out)]);
-	$ref->{$i}->{mappedLen} = &getMappedLen($ref->{$i}->{maxMapping},$ref->{$i}->{refMapping},$ref->{$i}->{queryMapping});
+	&findMapping($ref->{$i});
     }
+}
+sub findMapping {
+    my $query_ref = shift;
+    my $ref_bed = $query_ref->{refBED};
+    my $out = &mergeBED($ref_bed,$gap); #merge with gap allowance
+    push @cleanQ,$out;
+    #maxMapping = [chr,start,end]
+    $query_ref->{maxMapping} = &findMax([&SeqMule::Utils::readBED($out)]);
+    $query_ref->{mappedLen} = &getMappedLen($query_ref->{maxMapping},$query_ref->{refMapping},$query_ref->{queryMapping});
 }
 sub getMappedLen {
     #based on maxMapping found on ref
@@ -176,4 +185,10 @@ sub mergeBED {
     $out = $out || "$tmpdir/$$".rand($$).".tmp.bed";
     !system("bedtools sort -i $bed | bedtools merge -d $gap > $out") or die "merging $bed fail: $!\n";
     return $out;
+}
+sub joinThreads {
+    for my $i(threads->list(threads::running))
+    {
+	$i->join(); 
+    }
 }
