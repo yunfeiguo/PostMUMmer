@@ -39,6 +39,8 @@ for my $i(@ARGV) {
 		my $chr = $f[11];
 		($query_start,$query_end) = &smallerFirst($query_start,$query_end);
 		($ref_start,$ref_end) = &smallerFirst($ref_start,$ref_end);
+		$query_start -= 1; #convert to 0-based start
+		$ref_start -= 1;
 		#we need to make sure all regions that are accepted as final mapped regions come from
 		#a continuous sequence on the chr
 		if(defined $fa{$id}->{queryMapping} ) {
