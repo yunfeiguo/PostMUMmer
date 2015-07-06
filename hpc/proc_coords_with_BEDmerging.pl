@@ -145,7 +145,7 @@ sub findMax {
 }
 sub output {
 	my $ref = shift;
-	my $outputDir = "mapped_query_bed";
+	my $outputDir = "mapped_query_bed".(rand $$);
 	mkdir $outputDir unless -d $outputDir;
 	warn "mapped regions in query will be saved to $outputDir in BED format.\n";
 	my %fa = %$ref;
