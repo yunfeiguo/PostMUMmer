@@ -4,24 +4,94 @@ use strict;
 use warnings;
 use lib "/home/rcf-02/yunfeigu/perl5";
 use SeqMule::Utils;
+use SeqMule::Parallel;
+use Getopt::Std;
 
-die "Usage: $0 <indexed query FASTA> <1.coords 2.coords ...>\n" unless @ARGV >= 2;
+die "Usage: $0 <split|proc> <indexed query FASTA> [1.coords 2.coords ...]\n".
+" -c <TEXT>	contig name\n" 
+unless @ARGV >= 1;
 #    [S1]     [E1]  |     [S2]     [E2]  |  [LEN 1]  [LEN 2]  |  [% IDY]  |  [LEN R]  [LEN Q]  |  [COV R]  [COV Q]  | [TAGS]
 #===============================================================================================================================
 #15007271 15007689      32423    32005        419      419      86.64   133797422    51437       0.00     0.81   chr10	m150320_100742_42199_c100794652550000001823158109091525_s1_p0/54078/7931_59368
 #0		1	2	3		4	5	6	7		8	  9	  10	  11	12
+#PARAMETERS
 my $gap = 100; #max gap allowed for two alignments to be stiched together
 my $tmpdir = "/tmp";
 my $bedtools = "/home/rcf-02/yunfeigu/proj_dir/Downloads/bedtools2/bin/bedtools";
 my $debug = 0;
+my $minIdt = 90; #mininum identity between two sequences in a mapping, in percentage
+my $maxOverlapDist = 100; #max distance between a mapping and a CNV for them to be considered as overlapping
+my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=4GB -A lc_kw -q laird";
+
+#INPUT
+my %options;
+getopts("c",\%options);
+my $operation = shift @ARGV;
 my $query = shift @ARGV;
 my $idx = "$query.fai";
 die "no index: $idx\n" unless -e $idx;
 my %fa = &SeqMule::Utils::readFastaIdx($idx);
 my $total = scalar keys %fa;
 my @cleanQ; #files to be removed
-for my $i(@ARGV) {
-	open IN,'<',$i or die "open($i): $!\n";
+
+if ($operation eq 'split') {
+	#split the input coords by contig ID, then submit processing request by qsub
+	my $dir = "coord_by_contig";
+	mkdir $dir unless -d $dir;
+	&splitCoord({fa=>\%fa,dir=>$dir,coord=>\@ARGV});
+	for my $i(keys %fa) {
+		my $coord = $fa{$i}->{coord} || "";
+		next if -f "$i.done";
+		!system($qsub." ".&SeqMule::Parallel::genTempScript("$0 proc -c $i $query $coord","touch $i.done")) or die "qsub $i: $!\n";
+	}
+} elsif ($operation eq 'proc') {
+	my $outputDir = "mapped_query_bed";
+	mkdir $outputDir unless -d $outputDir;
+	my $coord = shift @ARGV;
+	&readCoord({fa=>\%fa,coord=>$coord});
+	warn "reading coords done\n";
+	&convert2BED(\%fa,$options{c});
+	warn "conversion to bed done\n";
+	&mergeBED_extractMaxMapping(\%fa,$options{c});
+	warn "merging and extraction done\n";
+	&output(\%fa,$options{c},$outputDir);
+} else {
+	die "$operation unknown, use split or proc\n";
+}
+warn "Clean up ...\n";
+&cleanup();
+	warn "All done\n";
+
+###################################################################
+sub splitCoord {
+	my $opt = shift;
+	my $fa = $opt->{fa};
+	my $coord = $opt->{coord};
+	my $dir = $opt->{dir};
+	my %fh; #store open filehandles
+	my @return; #return individual coords files
+
+	for my $i(@$coord) {
+		my %parsedContigs;
+		&readCoord(\%parsedContigs,$i);
+		for my $j (keys %parsedContigs) {
+			unless (defined $fh{$j}) {
+				my $coord = File::Spec->catfile($dir,$j."coords");
+				$fa->{$j}->{coord} = $coord;
+				#because we are going to append, we should make sure we begin with an empty file
+				unlink $coord or die "unlink($coord): $!\n" if -f $coord;
+				open ($fh{$j}, ">>",$coord) or die "$coord: $!\n";
+			}
+			print $fh{$j} $_,"\n" for @{$parsedContigs{$j}->{raw}};
+		}
+	}
+	close $_ for values(%fh);
+}
+sub readCoord {
+	my $fa = shift;
+	my $coord = shift;
+	return unless $coord;
+	open IN,'<',$coord or die "open($coord): $!\n";
 	while(<IN>){
 		s/\|//g;
 		s/^[\t ]+//;
@@ -43,30 +113,28 @@ for my $i(@ARGV) {
 		$ref_start -= 1;
 		#we need to make sure all regions that are accepted as final mapped regions come from
 		#a continuous sequence on the chr
-		if(defined $fa{$id}->{queryMapping} ) {
-			push @{$fa{$id}->{refMapping}},[$chr,$ref_start,$ref_end];
-			push @{$fa{$id}->{queryMapping}},[$chr,$query_start,$query_end];
+		if(defined $fa->{$id}->{queryMapping} ) {
+			push @{$fa->{$id}->{refMapping}},[$chr,$ref_start,$ref_end];
+			push @{$fa->{$id}->{queryMapping}},[$chr,$query_start,$query_end];
 		} else {
-			$fa{$id}->{refMapping} = [[$chr,$ref_start,$ref_end]];
-			$fa{$id}->{queryMapping} = [[$chr,$query_start,$query_end]];
+			$fa->{$id}->{refMapping} = [[$chr,$ref_start,$ref_end]];
+			$fa->{$id}->{queryMapping} = [[$chr,$query_start,$query_end]];
+		}
+		#store original data, only for splitting
+		if (defined $fa->{$id}->{raw}) {
+			push @{$fa->{$id}->{raw}},$_;
+		} else {
+			$fa->{$id}->{raw} = [$_];
 		}
 	}
 	close IN;
 }
-warn "reading coords done\n";
-&convert2BED(\%fa);
-warn "conversion to bed done\n";
-&mergeBED_extractMaxMapping(\%fa);
-warn "merging and extraction done\n";
-&output(\%fa);
-&cleanup(\%fa);
-warn "All done\n";
-
-###################################################################
 sub convert2BED {
 	my $ref = shift;
+	my $contig = shift;
 	my $count = 0;
 	for my $i(keys %$ref) {
+		next unless $i eq $contig;
 		$count++;
 		warn "conversion:$count/$total done\n" if $count % 100 == 0;
 		next unless defined $ref->{$i}->{refMapping};
@@ -80,8 +148,10 @@ sub convert2BED {
 }
 sub mergeBED_extractMaxMapping {
 	my $ref = shift;
+	my $contig = shift;
 	my $count = 0;
 	for my $i(keys %$ref) {
+		next unless $i eq $contig;
 		$count++;
 		warn "merge and extraction: $count/$total done\n" if $count % 100 == 0;
 		next unless defined $ref->{$i}->{refBED};
@@ -145,12 +215,14 @@ sub findMax {
 }
 sub output {
 	my $ref = shift;
-	my $outputDir = "mapped_query_bed".(rand $$);
+	my $contig = shift;
+	my $outputDir = shift;
 	mkdir $outputDir unless -d $outputDir;
 	warn "mapped regions in query will be saved to $outputDir in BED format.\n";
 	my %fa = %$ref;
 	print join("\t","FASTA_ID","Mapped_length","Total_length","Mapping_ratio","Mapped_chr","Query_start","Query_end"),"\n";
 	for my $i(keys %fa) {
+		next unless $i eq $contig;
 		my $mappedLen = $fa{$i}->{mappedLen} || 0;
 		my $totalLen = $fa{$i}->{length};
 		my $mapping = ['NA','NA','NA'];
