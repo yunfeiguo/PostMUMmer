@@ -6,26 +6,26 @@ use lib "/home/rcf-02/yunfeigu/perl5";
 use SeqMule::Utils;
 use SeqMule::Parallel;
 use Getopt::Std;
+use Data::Dumper;
 
-die "Usage: $0 <split|proc> <indexed query FASTA> [1.coords 2.coords ...]\n".
+die "Usage: $0 [options] <split|proc> <indexed query FASTA> [1.coords 2.coords ...]\n".
 " -c <TEXT>	contig name\n" 
-unless @ARGV >= 1;
-#    [S1]     [E1]  |     [S2]     [E2]  |  [LEN 1]  [LEN 2]  |  [% IDY]  |  [LEN R]  [LEN Q]  |  [COV R]  [COV Q]  | [TAGS]
-#===============================================================================================================================
-#15007271 15007689      32423    32005        419      419      86.64   133797422    51437       0.00     0.81   chr10	m150320_100742_42199_c100794652550000001823158109091525_s1_p0/54078/7931_59368
-#0		1	2	3		4	5	6	7		8	  9	  10	  11	12
+unless @ARGV >= 2;
 #PARAMETERS
 my $gap = 100; #max gap allowed for two alignments to be stiched together
 my $tmpdir = "/tmp";
 my $bedtools = "/home/rcf-02/yunfeigu/proj_dir/Downloads/bedtools2/bin/bedtools";
 my $debug = 0;
 my $minIdt = 90; #mininum identity between two sequences in a mapping, in percentage
+my $minLen2 = 50; #min length of alignment
 my $maxOverlapDist = 100; #max distance between a mapping and a CNV for them to be considered as overlapping
 my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=4GB -A lc_kw -q laird";
+my $cwd = $ENV{PWD};
 
 #INPUT
 my %options;
-getopts("c",\%options);
+getopts("c:",\%options);
+print "\@ARGV: @ARGV\n" if $debug;
 my $operation = shift @ARGV;
 my $query = shift @ARGV;
 my $idx = "$query.fai";
@@ -41,14 +41,28 @@ if ($operation eq 'split') {
 	&splitCoord({fa=>\%fa,dir=>$dir,coord=>\@ARGV});
 	for my $i(keys %fa) {
 		my $coord = $fa{$i}->{coord} || "";
-		next if -f "$i.done";
-		!system($qsub." ".&SeqMule::Parallel::genTempScript("$0 proc -c $i $query $coord","touch $i.done")) or die "qsub $i: $!\n";
+		my $stderr = File::Spec->catfile($dir,"$i.stderr");
+		my $stdout = File::Spec->catfile($dir,"$i.stdout");
+		my $mr = File::Spec->catfile($dir,"$i.mr"); #mapping ratio result
+		my $done = File::Spec->catfile($dir,"$i.done");
+		next if -f $done;
+		!system("$qsub -e $stderr -o $stdout ".&SeqMule::Parallel::genTempScript(
+				"cd $cwd",
+				"$0 -c $i proc $query $coord",
+				"touch $done")) or die "qsub $i: $!\n";
+		print "we got a coord for this contig\n" if $coord and $debug;
+		print("$qsub -e $stderr -o $stdout ".&SeqMule::Parallel::genTempScript(
+				"cd $cwd",
+				"$0 -c $i proc $query $coord > $mr",
+				"touch $done"),"\n") or die "qsub $i: $!\n" if $debug;
 	}
 } elsif ($operation eq 'proc') {
 	my $outputDir = "mapped_query_bed";
 	mkdir $outputDir unless -d $outputDir;
+	print "\@ARGV: @ARGV\n" if $debug;
 	my $coord = shift @ARGV;
-	&readCoord({fa=>\%fa,coord=>$coord});
+	&readCoord(\%fa,$coord);
+	print Dumper(%fa) if $debug;
 	warn "reading coords done\n";
 	&convert2BED(\%fa,$options{c});
 	warn "conversion to bed done\n";
@@ -64,6 +78,7 @@ warn "Clean up ...\n";
 
 ###################################################################
 sub splitCoord {
+	#read all coords files, split them into coords with single contig
 	my $opt = shift;
 	my $fa = $opt->{fa};
 	my $coord = $opt->{coord};
@@ -76,20 +91,24 @@ sub splitCoord {
 		&readCoord(\%parsedContigs,$i);
 		for my $j (keys %parsedContigs) {
 			unless (defined $fh{$j}) {
-				my $coord = File::Spec->catfile($dir,$j."coords");
+				my $coord = File::Spec->catfile($dir,$j.".coords");
 				$fa->{$j}->{coord} = $coord;
 				#because we are going to append, we should make sure we begin with an empty file
 				unlink $coord or die "unlink($coord): $!\n" if -f $coord;
 				open ($fh{$j}, ">>",$coord) or die "$coord: $!\n";
 			}
-			print $fh{$j} $_,"\n" for @{$parsedContigs{$j}->{raw}};
+			if(defined $parsedContigs{$j}->{raw}) {
+				print {$fh{$j}} $_,"\n" for @{$parsedContigs{$j}->{raw}};
+			}
 		}
 	}
 	close $_ for values(%fh);
 }
 sub readCoord {
+	#read coords file, store parsed result in a hash
 	my $fa = shift;
 	my $coord = shift;
+	print "will parse $coord\n" if $debug;
 	return unless $coord;
 	open IN,'<',$coord or die "open($coord): $!\n";
 	while(<IN>){
@@ -97,28 +116,21 @@ sub readCoord {
 		s/^[\t ]+//;
 		next if /^[=\/\s\[]|^NUCMER/;
 		chomp;
-		my @f=split;
-		die "ERROR: expected 13 fields: $_\n" unless @f==13;
-		warn "DEBUG:@f\n" if $debug;
-		#here we only care how much of the query is aligned, regardless of alignment location
-		my $query_start = $f[2];
-		my $query_end = $f[3];
-		my $ref_start = $f[0];
-		my $ref_end = $f[1];
-		my $id = $f[12];
-		my $chr = $f[11];
-		($query_start,$query_end) = &smallerFirst($query_start,$query_end);
-		($ref_start,$ref_end) = &smallerFirst($ref_start,$ref_end);
-		$query_start -= 1; #convert to 0-based start
-		$ref_start -= 1;
+		my $parsedLine = &parseLine($_);
+		my $id = $parsedLine->{id};
+		next unless &passFilter($parsedLine);
+		($parsedLine->{query_start},$parsedLine->{query_end}) = &smallerFirst($parsedLine->{query_start},$parsedLine->{query_end});
+		($parsedLine->{ref_start},$parsedLine->{ref_end}) = &smallerFirst($parsedLine->{ref_start},$parsedLine->{ref_end});
+		$parsedLine->{query_start} -= 1; #convert to 0-based start
+		$parsedLine->{ref_start} -= 1;
 		#we need to make sure all regions that are accepted as final mapped regions come from
 		#a continuous sequence on the chr
 		if(defined $fa->{$id}->{queryMapping} ) {
-			push @{$fa->{$id}->{refMapping}},[$chr,$ref_start,$ref_end];
-			push @{$fa->{$id}->{queryMapping}},[$chr,$query_start,$query_end];
+			push @{$fa->{$id}->{refMapping}},[$parsedLine->{chr},$parsedLine->{ref_start},$parsedLine->{ref_end}];
+			push @{$fa->{$id}->{queryMapping}},[$parsedLine->{chr},$parsedLine->{query_start},$parsedLine->{query_end}];
 		} else {
-			$fa->{$id}->{refMapping} = [[$chr,$ref_start,$ref_end]];
-			$fa->{$id}->{queryMapping} = [[$chr,$query_start,$query_end]];
+			$fa->{$id}->{refMapping} = [[$parsedLine->{chr},$parsedLine->{ref_start},$parsedLine->{ref_end}]];
+			$fa->{$id}->{queryMapping} = [[$parsedLine->{chr},$parsedLine->{query_start},$parsedLine->{query_end}]];
 		}
 		#store original data, only for splitting
 		if (defined $fa->{$id}->{raw}) {
@@ -126,17 +138,52 @@ sub readCoord {
 		} else {
 			$fa->{$id}->{raw} = [$_];
 		}
+		print "Parsing line $.: $_\n" if $debug;
+		print Dumper($parsedLine) if $debug;
 	}
 	close IN;
 }
+sub passFilter {
+	#filter line by global filters
+	my $parsedLine = shift;
+	my $result = 1;
+	$result = 0 if $parsedLine->{idt} < $minIdt;
+	$result = 0 if $parsedLine->{len2} < $minLen2;
+
+	return $result;
+}
+sub parseLine {
+	#parse a line in *.coords
+	my $line = shift;
+	my $result = {};
+	my @f=split ' ',$line;
+	die "ERROR: expected 13 fields: $line\n" unless @f==13;
+	warn "DEBUG:@f\n" if $debug;
+#    [S1]     [E1]  |     [S2]     [E2]  |  [LEN 1]  [LEN 2]  |  [% IDY]  |  [LEN R]  [LEN Q]  |  [COV R]  [COV Q]  | [TAGS]
+#===============================================================================================================================
+#15007271 15007689      32423    32005        419      419      86.64   133797422    51437       0.00     0.81   chr10	m150320_100742_42199_c100794652550000001823158109091525_s1_p0/54078/7931_59368
+#0		1	2	3		4	5	6	7		8	  9	  10	  11	12
+	#here we only care how much of the query is aligned, regardless of alignment location
+	$result->{query_start} = $f[2];
+	$result->{query_end} = $f[3];
+	$result->{ref_start} = $f[0];
+	$result->{ref_end} = $f[1];
+	$result->{id} = $f[12];
+	$result->{chr} = $f[11];
+	$result->{idt} = $f[6];
+	$result->{len2} = $f[5]; #alignment length on query
+
+	return $result;
+}
 sub convert2BED {
+	#convert alignment into BED format
 	my $ref = shift;
 	my $contig = shift;
 	my $count = 0;
 	for my $i(keys %$ref) {
 		next unless $i eq $contig;
 		$count++;
-		warn "conversion:$count/$total done\n" if $count % 100 == 0;
+		warn "conversion:$count/$total done\n";
 		next unless defined $ref->{$i}->{refMapping};
 		#the mapping may contain overlapping regions
 		#we should only use non-overlapped regions
@@ -153,7 +200,7 @@ sub mergeBED_extractMaxMapping {
 	for my $i(keys %$ref) {
 		next unless $i eq $contig;
 		$count++;
-		warn "merge and extraction: $count/$total done\n" if $count % 100 == 0;
+		warn "merge and extraction: $count/$total done\n";
 		next unless defined $ref->{$i}->{refBED};
 		&findMapping($ref->{$i});
 	}
@@ -217,7 +264,6 @@ sub output {
 	my $ref = shift;
 	my $contig = shift;
 	my $outputDir = shift;
-	mkdir $outputDir unless -d $outputDir;
 	warn "mapped regions in query will be saved to $outputDir in BED format.\n";
 	my %fa = %$ref;
 	print join("\t","FASTA_ID","Mapped_length","Total_length","Mapping_ratio","Mapped_chr","Query_start","Query_end"),"\n";
