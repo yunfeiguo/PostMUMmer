@@ -9,23 +9,25 @@ use Getopt::Std;
 use Data::Dumper;
 
 die "Usage: $0 [options] <split|proc> <indexed query FASTA> [1.coords 2.coords ...]\n".
-" -c <TEXT>	contig name\n" 
+" -c <TEXT>	contig name\n". 
+" -n		skip split, just submit and run\n".
+" -f <FILE>	CNV input\n".
+" -g <INT>	gap allowance for merging near regions\n"
 unless @ARGV >= 2;
+my %options;
+getopts("ng:f:c:",\%options);
 #PARAMETERS
-my $gap = 100; #max gap allowed for two alignments to be stiched together
+my $gap = $options{g} || 100; #max gap allowed for two alignments to be stiched together
 my $tmpdir = "/tmp";
 my $bedtools = "/home/rcf-02/yunfeigu/proj_dir/Downloads/bedtools2/bin/bedtools";
-my $debug = 0;
+my $debug = 1;
 my $minIdt = 90; #mininum identity between two sequences in a mapping, in percentage
 my $minLen2 = 50; #min length of alignment
-my $maxOverlapDist = 100; #max distance between a mapping and a CNV for them to be considered as overlapping
-my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=4GB -A lc_kw -q laird";
+my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=2GB -A lc_kw -q laird";
 my $cwd = $ENV{PWD};
 
 #INPUT
-my %options;
-getopts("c:",\%options);
-print "\@ARGV: @ARGV\n" if $debug;
+#print "\@ARGV: @ARGV\n" if $debug == 1;
 my $operation = shift @ARGV;
 my $query = shift @ARGV;
 my $idx = "$query.fai";
@@ -38,31 +40,37 @@ if ($operation eq 'split') {
 	#split the input coords by contig ID, then submit processing request by qsub
 	my $dir = "coord_by_contig";
 	mkdir $dir unless -d $dir;
-	&splitCoord({fa=>\%fa,dir=>$dir,coord=>\@ARGV});
+	&splitCoord({fa=>\%fa,dir=>$dir,coord=>\@ARGV}) unless $options{n};
 	for my $i(keys %fa) {
 		my $coord = $fa{$i}->{coord} || "";
+		#when -n is specified, assume coords are split by contig already
+		#we only need to submit the jobs
+		if($options{n}) {
+			$coord = File::Spec->catfile($dir,"$i.coords");
+			$coord = "" unless -f $coord;
+		}
 		my $stderr = File::Spec->catfile($dir,"$i.stderr");
 		my $stdout = File::Spec->catfile($dir,"$i.stdout");
 		my $mr = File::Spec->catfile($dir,"$i.mr"); #mapping ratio result
 		my $done = File::Spec->catfile($dir,"$i.done");
+		my $procCmd = "$0 -c $i ".($gap? " -g $gap":"")." proc $query $coord",
+		my @allcmd;
+		push @allcmd,"cd $cwd";
+		push @allcmd,$procCmd;
+		push @allcmd,"touch $done";
 		next if -f $done;
-		!system("$qsub -e $stderr -o $stdout ".&SeqMule::Parallel::genTempScript(
-				"cd $cwd",
-				"$0 -c $i proc $query $coord",
-				"touch $done")) or die "qsub $i: $!\n";
-		print "we got a coord for this contig\n" if $coord and $debug;
-		print("$qsub -e $stderr -o $stdout ".&SeqMule::Parallel::genTempScript(
-				"cd $cwd",
-				"$0 -c $i proc $query $coord > $mr",
-				"touch $done"),"\n") or die "qsub $i: $!\n" if $debug;
+		my $submitCmd = "$qsub -e $stderr -o $stdout ".&SeqMule::Parallel::genTempScript(@allcmd);
+		!system($submitCmd) or die "qsub $i: $!\n";
+		print "we got a coord for this contig\n" if $coord and $debug >= 1;
+		print($submitCmd,"\n") if $debug >= 1;
 	}
 } elsif ($operation eq 'proc') {
 	my $outputDir = "mapped_query_bed";
 	mkdir $outputDir unless -d $outputDir;
-	print "\@ARGV: @ARGV\n" if $debug;
+	print "\@ARGV: @ARGV\n" if $debug == 1;
 	my $coord = shift @ARGV;
 	&readCoord(\%fa,$coord);
-	print Dumper(%fa) if $debug;
+	print Dumper(%fa) if $debug == 3;
 	warn "reading coords done\n";
 	&convert2BED(\%fa,$options{c});
 	warn "conversion to bed done\n";
@@ -73,7 +81,7 @@ if ($operation eq 'split') {
 	die "$operation unknown, use split or proc\n";
 }
 warn "Clean up ...\n";
-&cleanup();
+#&cleanup();
 	warn "All done\n";
 
 ###################################################################
@@ -108,7 +116,7 @@ sub readCoord {
 	#read coords file, store parsed result in a hash
 	my $fa = shift;
 	my $coord = shift;
-	print "will parse $coord\n" if $debug;
+	print "will parse $coord\n" if $debug == 1;
 	return unless $coord;
 	open IN,'<',$coord or die "open($coord): $!\n";
 	while(<IN>){
@@ -138,8 +146,8 @@ sub readCoord {
 		} else {
 			$fa->{$id}->{raw} = [$_];
 		}
-		print "Parsing line $.: $_\n" if $debug;
-		print Dumper($parsedLine) if $debug;
+		print "Parsing line $.: $_\n" if $debug == 3;
+		print Dumper($parsedLine) if $debug == 3;
 	}
 	close IN;
 }
@@ -158,7 +166,7 @@ sub parseLine {
 	my $result = {};
 	my @f=split ' ',$line;
 	die "ERROR: expected 13 fields: $line\n" unless @f==13;
-	warn "DEBUG:@f\n" if $debug;
+	warn "DEBUG:@f\n" if $debug == 3;
 #    [S1]     [E1]  |     [S2]     [E2]  |  [LEN 1]  [LEN 2]  |  [% IDY]  |  [LEN R]  [LEN Q]  |  [COV R]  [COV Q]  | [TAGS]
 #===============================================================================================================================
 #15007271 15007689      32423    32005        419      419      86.64   133797422    51437       0.00     0.81   chr10	m150320_100742_42199_c100794652550000001823158109091525_s1_p0/54078/7931_59368
@@ -219,6 +227,8 @@ sub getMappedLen {
 	#identify mapped regions on query
 	#get total length of mapped regions on
 	#query
+	#only regions fully contained inside maxMapping
+	#are considered part of final mapping
 	my $max = shift;
 	my $allRef = shift;
 	my $allQuery = shift;
@@ -236,7 +246,7 @@ sub getMappedLen {
 	#mapped regions in query should be merged with gap of 0 before
 	#length is calculated
 	my $query_mapped_bed = &SeqMule::Utils::genBED(\@mappedQuery);
-	my $query_mapped_nonoverlap_bed = &mergeBED($query_mapped_bed);
+	my $query_mapped_nonoverlap_bed = &mergeBED($query_mapped_bed,$gap);
 	$mappedLen = &SeqMule::Utils::bed2total($query_mapped_nonoverlap_bed);
 
 	push @cleanQ,$query_mapped_bed,$query_mapped_nonoverlap_bed;
@@ -253,6 +263,7 @@ sub findMax {
 		my $len = $i->[2]-$i->[1];
 		#if there are multiple alignments with equal lengths,
 		#we output first one of them
+		warn "findMax: ",join(" ",@$i),"\n" if $debug >= 1;
 		if ($len > $max) {
 			$pos = $i;
 			$max = $len;
@@ -313,5 +324,6 @@ sub mergeBED {
 	$gap = $gap || 0;
 	$out = $out || "$tmpdir/$$".rand($$).".tmp.bed";
 	!system("$bedtools sort -i $bed | $bedtools merge -d $gap > $out") or die "merging $bed fail: $!\n";
+	warn("executing: $bedtools sort -i $bed \| $bedtools merge -d $gap > $out\n") if $debug >= 1;
 	return $out;
 }
