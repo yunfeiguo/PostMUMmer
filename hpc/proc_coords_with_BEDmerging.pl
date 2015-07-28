@@ -20,7 +20,7 @@ getopts("ng:f:c:",\%options);
 my $gap = $options{g} || 100; #max gap allowed for two alignments to be stiched together
 my $tmpdir = "/tmp";
 my $bedtools = "/home/rcf-02/yunfeigu/proj_dir/Downloads/bedtools2/bin/bedtools";
-my $debug = 1;
+my $debug = 0;
 my $minIdt = 90; #mininum identity between two sequences in a mapping, in percentage
 my $minLen2 = 50; #min length of alignment
 my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=2GB -A lc_kw -q laird";
@@ -240,8 +240,8 @@ sub getMappedLen {
 	for my $i(0..$#{$allRef}) {
 		#the mapped region must be fully contained
 		#as we have merged all mapped regions
-		next unless $allRef->[$i]->[0] eq $chr and $allRef->[$i]->[1] >= $start and $allRef->[$i]->[2] <= $end;
-		push @mappedQuery,$allQuery->[$i];
+		next unless $allRef->[$i]->[0] eq $chr and $allRef->[$i]->[1] <= $end and $allRef->[$i]->[2] >= $start;
+		push @mappedQuery,[@{$allQuery->[$i]},$chr,$start,$end];
 	}
 	#mapped regions in query should be merged with gap of 0 before
 	#length is calculated
@@ -323,7 +323,9 @@ sub mergeBED {
 	my $out = shift;
 	$gap = $gap || 0;
 	$out = $out || "$tmpdir/$$".rand($$).".tmp.bed";
-	!system("$bedtools sort -i $bed | $bedtools merge -d $gap > $out") or die "merging $bed fail: $!\n";
-	warn("executing: $bedtools sort -i $bed \| $bedtools merge -d $gap > $out\n") if $debug >= 1;
+	#keep column 4,5,6, only output distinct columns
+	my $nCol = `perl -ne '\@f=split;print scalar \@f and exit;' $bed`;
+	!system("$bedtools sort -i $bed | $bedtools merge -d $gap ".($nCol>3? " -c 4,5,6 -o distinct ":"")." > $out") or die "merging $bed fail: $!\n";
+	warn("executing: $bedtools sort -i $bed \| $bedtools merge -d $gap ".($nCol>3?" -c 4,5,6 -o distinct ":"")." > $out\n") if $debug >= 1;
 	return $out;
 }

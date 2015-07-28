@@ -5,8 +5,8 @@ use warnings;
 use File::Basename qw/basename/;
 my $minLen = 10_000; #min length for unmapped region
 
-die "Usage: $0 <bedtools> <bed> <indexed genome fasta>\n" unless @ARGV == 3;
-my $bedtools = shift;
+die "Usage: $0 <bed> <indexed genome fasta>\n" unless @ARGV == 2;
+my $bedtools = "bedtools";
 my $bed = shift;
 my $genome = "/tmp/".rand($$).".genome";
 my $fa = shift;
