@@ -8,15 +8,13 @@ use File::Spec;
 my $chr_dir = "/home/yunfeiguo/database/hg_index/ucsc/hg38_chr/chroms";
 my $tmpdir = "/tmp";
 my $pwd = $ENV{PWD};
-my $query = File::Spec->catfile($pwd,"hx1.20150513.fasta");
+my $query = "/home/yunfeiguo/projects/PacBio_reference_genome/falcon_aln/hx1_20150716/2-asm-falcon/p_ctg.fa";
 my $qsub_option = <<SCRIPT;
 #!/bin/bash
 #\$ -cwd
 #\$ -V
 #\$ -S /bin/bash
 #\$ -l h_vmem=8G
-#\$ -m a
-#\$ -M guoyunfei1989\@gmail.com
 set -e
 SCRIPT
 #\$ -m ea
@@ -25,7 +23,7 @@ SCRIPT
 for my $i(glob File::Spec->catfile($chr_dir,"*.fa")) {
     #my ($prefix) = (basename $i)=~/^(chr[\dXYM]{1,2})\.fa$/ or warn "ERROR: failed to match $i\n" and next;
     my ($prefix) = (basename $i)=~/^(chr.*?)\.fa$/ or warn "ERROR: failed to match $i\n" and next;
-    $prefix = "hx1_$prefix";
+    $prefix = "hx1f4_$prefix";
     my $script = File::Spec->catfile($tmpdir,"$prefix.".rand($$).".runmummer.sh");
     !system("mkdir $prefix") or die "mkdir(): $!\n" unless -d $prefix;
     open OUT,">",$script or die "ERROR: failed to write to $script: $!\n";
@@ -35,8 +33,8 @@ for my $i(glob File::Spec->catfile($chr_dir,"*.fa")) {
     print OUT "#\$ -o ".File::Spec->catfile($prefix,"stdout")."\n";
     #use file staging to reduce IO
     print OUT "cd \$TMP\n";
-    print OUT "nucmer --prefix=$prefix $i $query\n";
-    print OUT "show-coords -r -c -l $prefix.delta > $prefix.coords\n";
+    print OUT "nucmer -c 400 -l 150 --prefix=$prefix $i $query\n";
+    print OUT "show-coords -r -c -l -k $prefix.delta > $prefix.coords\n";
     print OUT "show-tiling $prefix.delta > $prefix.tiling\n";
     print OUT "if [ -s $prefix.tiling ]; then mummerplot --postscript $prefix.tiling -p $prefix;fi\n";
     #print OUT "delta-filter -m $prefix.delta > $prefix.filtered.delta\n";
@@ -50,7 +48,6 @@ for my $i(glob File::Spec->catfile($chr_dir,"*.fa")) {
     #warn("qsub $script\n") unless -e File::Spec->catfile($pwd,$prefix,"$prefix.done");
 }
 warn "All done\n";
-
 
 #process coords file
 #perl -ne 'next if /^[=\/\s]|^NUCMER/;s/\|//g;print' hx1_50kb_on_hg38.filtered.coords > hx1_50kb_on_hg38.filtered.whitespace.coords
