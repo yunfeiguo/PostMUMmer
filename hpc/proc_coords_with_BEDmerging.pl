@@ -12,7 +12,11 @@ die "Usage: $0 [options] <split|proc> <indexed query FASTA> [1.coords 2.coords .
 " -c <TEXT>	contig name\n". 
 " -n		skip split, just submit and run\n".
 " -f <FILE>	CNV input\n".
-" -g <INT>	gap allowance for merging near regions\n"
+" -g <INT>	gap allowance for merging near regions\n".
+????
+" -i <INT>  min identity allowed\n".
+" -l <INT>  min len2 (length of mapped query) allowed\n".
+" -s        skip NCMR finding, just output all alignments\n"
 unless @ARGV >= 2;
 my %options;
 getopts("ng:f:c:",\%options);
