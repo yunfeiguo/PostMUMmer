@@ -15,17 +15,21 @@ submitInterval = 1 #number of seconds between qstat
 checkInterval = 1 #sec
 debug = False
 maxConcurrentLaird = 500
+maxConcurrentBcl = 500
 maxConcurrentOther = 0
 jobReg = {} #record job queue, status, sentinel file path
-chr_dir = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/hg38_chr/unmasked"
-chrFile = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/GCA_000001405.15_GRCh38_full_analysis_set.fna"
+#chr_dir = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/hg38_chr/unmasked"
+#chrFile = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/GCA_000001405.15_GRCh38_full_analysis_set.fna"
+chrFile = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar.fa"
+chr_dir = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar_chr"
 qsubLaird = "qsub -V -l walltime=199:59:0 -l nodes=1:ppn=1 -A lc_kw -q laird -l mem=2GB -S /bin/bash"
 qsubMain = "qsub -V -l walltime=23:59:0 -l nodes=1:ppn=1 -A lc_kw -l mem=2GB -S /bin/bash"
+qsubBcl = "qsub -V -cwd -l h_vmem=7G -S /bin/bash"
 #prototype of lastz options
-lastzOpt = "--notransition --step=20 --ambiguous=iupac --format=maf --gappedthresh=1000000 --identity=90 --progress=10";
+lastzOpt = "--notransition --gap=1000,1 --step=20 --ambiguous=iupac --format=maf --gappedthresh=1000000 --identity=80 --progress=10";
 cwd = os.getcwd()
-noSleep = False
-#noSleep = True
+#noSleep = False
+noSleep = True
 
 def safeMkdir(dir):
     if not os.path.isdir(dir):
@@ -34,10 +38,12 @@ def safeMkdir(dir):
         except OSError:
             logging.critical("%s exists" % dir)
 def readFastaIdx(idx):
+    fh = None
     try:
        fh = open(idx,'r')
     except IOError as e:
-       logging.critical("I/O error(%d): %s" % e.errno,e.strerror)
+       logging.critical("I/O error: {0}".format(idx))
+       raise
     ctg = {}
     for line in fh:
         f = line.split()
@@ -153,8 +159,8 @@ def submitLastzJob(result_dir, fa, qCount, rID, q, qsub):
 desc = '''
 query_mapping.bed has 6 columns, query_ctg_id, start, end, chr, chr_start, chr_end
 chr refers to the chromosome the query_ctg_id is mapped to'''
-if len(sys.argv) == 0 and len(sys.argv) == 1:
-    sys.exit("Usage: %s <query1.fa query2.fa ...>\n" % sys.argv[0])
+if len(sys.argv) == 0 or len(sys.argv) == 1:
+    sys.exit("Usage: %s <query1.fa query2.fa ...>" % sys.argv[0])
 query = sys.argv[1:len(sys.argv)]
 bed = None
 result_dir = os.path.join(cwd,"lastz_result")
@@ -163,18 +169,20 @@ safeMkdir(result_dir)
 #allChr = ["alt","chr10","chr11","chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr1","chr20","chr21","chr22","chr2","chr3","chr4","chr5","chr6","chr7","chr8","chr9","chrX","chrY"]
 allChr = readFastaIdx(chrFile+".fai")
 for j in range(0,len(query)):
-    oneQuery = query[j]
+    oneQuery = os.path.abspath(query[j])
     print(oneQuery)
     for i in allChr:
-        if getJobCount('laird') < maxConcurrentLaird:
-            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'laird', qsub = qsubLaird)
-        elif getJobCount('other') < maxConcurrentOther:
-            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'other', qsub = qsubMain)
+        #if getJobCount('laird') < maxConcurrentLaird:
+        #    submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'laird', qsub = qsubLaird)
+        #elif getJobCount('other') < maxConcurrentOther:
+        #    submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'other', qsub = qsubMain)
+        if getJobCount('all.q') < maxConcurrentBcl:
+            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'all.q', qsub = qsubBcl)
         else:
             if debug:
                 print("queuing")
             while True:
-                if getJobCount('laird') < maxConcurrentLaird or getJobCount('other') < maxConcurrentOther:
+		if getJobCount('all.q') < maxConcurrentBcl:
                     break
 clean()
 logging.info("All done")
