@@ -4,11 +4,24 @@ use strict;
 use warnings;
 use File::Basename qw/basename/;
 use File::Spec;
+use Getopt::Std;
 
-my $chr_dir = "/home/yunfeiguo/database/hg_index/ucsc/hg38_chr/chroms";
+my %options;
+getopts("n",\%options);
+die "Usage: $0 <abs path to reference chr dir> <abs path to query fasta>\n".
+" -n		no sleep\n"
+unless @ARGV>=2;
+#my $chr_dir = "/home/yunfeiguo/database/hg_index/GRCh38_patch/GRCh38p4_chr";
+my $chr_dir = shift @ARGV;
 my $tmpdir = "/tmp";
 my $pwd = $ENV{PWD};
-my $query = "/home/yunfeiguo/projects/PacBio_reference_genome/falcon_aln/hx1_20150716/2-asm-falcon/p_ctg.fa";
+#my $query = "/home/yunfeiguo/projects/PacBio_reference_genome/falcon_aln/hx1_20150716/2-asm-falcon/p_ctg.fa";
+my $query = shift @ARGV;
+my $run_dir = "run";
+my $queryPrefix= "hx1f4";
+mkdir $run_dir unless -d $run_dir;
+chdir $run_dir;
+$pwd = File::Spec->catfile($pwd,$run_dir);
 my $qsub_option = <<SCRIPT;
 #!/bin/bash
 #\$ -cwd
@@ -19,13 +32,19 @@ set -e
 SCRIPT
 #\$ -m ea
 #\$ -M guoyunfei1989\@gmail.com
+#
+warn "ref chr dir: $chr_dir\n";
+warn "query fasta: $query\n";
 
 for my $i(glob File::Spec->catfile($chr_dir,"*.fa")) {
     #my ($prefix) = (basename $i)=~/^(chr[\dXYM]{1,2})\.fa$/ or warn "ERROR: failed to match $i\n" and next;
-    my ($prefix) = (basename $i)=~/^(chr.*?)\.fa$/ or warn "ERROR: failed to match $i\n" and next;
-    $prefix = "hx1f4_$prefix";
+    my ($prefix) = (basename $i)=~/^(.*?)\.fa$/ or warn "ERROR: failed to match $i\n" and next;
+    $prefix = "${queryPrefix}_$prefix";
+    $prefix =~ s/[\:\*]/_/g;
+    #after prefix for script and subfolder is done, process file name to make it unambiguous
+    $i =~ s/([\:\*])/\\$1/g;
     my $script = File::Spec->catfile($tmpdir,"$prefix.".rand($$).".runmummer.sh");
-    !system("mkdir $prefix") or die "mkdir(): $!\n" unless -d $prefix;
+    mkdir($prefix) or die "mkdir($prefix): $!\n" unless -d $prefix;
     open OUT,">",$script or die "ERROR: failed to write to $script: $!\n";
     print OUT $qsub_option,"\n";
     #redirect stderr and stdout
@@ -44,9 +63,13 @@ for my $i(glob File::Spec->catfile($chr_dir,"*.fa")) {
     print OUT "cp -r * ".File::Spec->catfile($pwd,$prefix)." \n";
     print OUT "touch ".File::Spec->catfile($pwd,$prefix,"$prefix.done")."\n";
     close OUT;
-    !system("qsub $script\n") or die "$script: $!\n" unless -e File::Spec->catfile($pwd,$prefix,"$prefix.done");
-    #warn("qsub $script\n") unless -e File::Spec->catfile($pwd,$prefix,"$prefix.done");
+    unless (-e File::Spec->catfile($pwd,$prefix,"$prefix.done")) {
+	!system("qsub $script\n") or die "$script: $!\n" ;
+	sleep 5 unless $options{'n'} ;
+	#die("qsub $script\n");
+    }
 }
+warn "Results written to $run_dir\n";
 warn "All done\n";
 
 #process coords file
