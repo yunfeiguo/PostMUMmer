@@ -12,10 +12,10 @@ logging.basicConfig(level=logging.INFO, format = '%(asctime)s - %(levelname)s - 
 #global variables
 cleanQ = []
 submitInterval = 1 #number of seconds between qstat
-checkInterval = 30 #sec
+checkInterval = 1 #sec
 debug = False
-maxConcurrentLaird = 300
-maxConcurrentOther = 200
+maxConcurrentLaird = 500
+maxConcurrentOther = 0
 jobReg = {} #record job queue, status, sentinel file path
 chr_dir = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/hg38_chr/unmasked"
 chrFile = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/GCA_000001405.15_GRCh38_full_analysis_set.fna"
@@ -162,18 +162,15 @@ safeMkdir(result_dir)
 	#align each query contig to every chr, one at a time
 #allChr = ["alt","chr10","chr11","chr12","chr13","chr14","chr15","chr16","chr17","chr18","chr19","chr1","chr20","chr21","chr22","chr2","chr3","chr4","chr5","chr6","chr7","chr8","chr9","chrX","chrY"]
 allChr = readFastaIdx(chrFile+".fai")
-count = 0
 for j in range(0,len(query)):
     oneQuery = query[j]
     print(oneQuery)
     for i in allChr:
-        count += 1
         if getJobCount('laird') < maxConcurrentLaird:
             submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'laird', qsub = qsubLaird)
         elif getJobCount('other') < maxConcurrentOther:
             submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'other', qsub = qsubMain)
         else:
-            count -= 1
             if debug:
                 print("queuing")
             while True:

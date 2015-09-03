@@ -13,7 +13,6 @@ die "Usage: $0 [options] <split|proc> <indexed query FASTA> [1.coords 2.coords .
 " -n		skip split, just submit and run\n".
 " -f <FILE>	CNV input\n".
 " -g <INT>	gap allowance for merging near regions\n".
-????
 " -i <INT>  min identity allowed\n".
 " -l <INT>  min len2 (length of mapped query) allowed\n".
 " -s        skip NCMR finding, just output all alignments\n"
@@ -25,7 +24,7 @@ my $gap = $options{g} || 100; #max gap allowed for two alignments to be stiched 
 my $tmpdir = "/tmp";
 my $bedtools = "/home/rcf-02/yunfeigu/proj_dir/Downloads/bedtools2/bin/bedtools";
 my $debug = 0;
-my $minIdt = 90; #mininum identity between two sequences in a mapping, in percentage
+my $minIdt = 95; #mininum identity between two sequences in a mapping, in percentage
 my $minLen2 = 50; #min length of alignment
 my $qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=2GB -A lc_kw -q laird";
 my $cwd = $ENV{PWD};
