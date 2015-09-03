@@ -205,7 +205,7 @@ sub convert2BED {
 	if (defined $contig) {
 	    next unless $i eq $contig;
 	} else {
-	    next unless $ref->{$i}->{length};
+	    next unless defined $ref->{$i}->{queryMapping};
 	}
 	$count++;
 	warn "conversion:$count/$total done\n";
@@ -226,7 +226,7 @@ sub mergeBED_extractMaxMapping {
 	if (defined $contig) {
 	    next unless $i eq $contig;
 	} else {
-	    next unless $ref->{$i}->{length};
+	    next unless defined $ref->{$i}->{queryMapping};
 	}
 	$count++;
 	warn "merge and extraction: $count/$total done\n";
@@ -300,17 +300,17 @@ sub output {
     my $israw = $opt->{raw};
     warn "mapped regions in query will be saved to $outputDir in BED format.\n";
     my %fa = %$ref;
-    if($israw) {
-	my $bed = "$outputDir/$contig.filtered_mappedQuery.bed";
-	&printCoord2bed($fa{$contig}->{coord2bed},$bed);
-    } else {
-	print join("\t","#FASTA_ID","Mapped_length","Total_length","Mapping_ratio","Mapped_chr","Query_start","Query_end"),"\n";
-	for my $i(keys %fa) {
-	    if(defined $contig) {
-		next unless $i eq $contig;
-	    } else {
-		next unless $fa{$i}->{length};
-	    }
+    print join("\t","#FASTA_ID","Mapped_length","Total_length","Mapping_ratio","Mapped_chr","Query_start","Query_end"),"\n" if not $israw;
+    for my $i(keys %fa) {
+	if(defined $contig) {
+	    next unless $i eq $contig;
+	} else {
+	    next unless defined $fa{$i}->{queryMapping};
+	}
+	my $bed = "$outputDir/$i.filtered_mappedQuery.bed";
+	if($israw) {
+	    &printCoord2bed($fa{$i}->{coord2bed},$bed);
+	} else {
 	    my $mappedLen = $fa{$i}->{mappedLen} || 0;
 	    my $totalLen = $fa{$i}->{length};
 	    my $mapping = ['NA','NA','NA'];
@@ -329,7 +329,7 @@ sub output {
 	    #we need to replace chr name by query contig name
 	    #because previously we put chr name here to differentiate 
 	    #alignments on different chromosomes.
-	    !system("perl -pe 's/^(\\S+)/$i/' ".$fa{$i}->{mappedQueryBed}." > $outputDir/$i.mappedQuery.bed")
+	    !system("perl -pe 's/^(\\S+)/$i/' ".$fa{$i}->{mappedQueryBed}." > $bed")
 		or die "failed to copy BED $i: $!\n" if defined $fa{$i}->{mappedQueryBed};
 	}
     }
