@@ -13,15 +13,16 @@ die "Usage: $0 [options] <1.coords 2.coords ...>\n".
 " -g <INT>	gap allowance for merging near regions, default:100\n".
 " -i <INT>	identity, default 90\n".
 " -l <INT>	min len2(length of mapped query), default 50\n".
-" -r		reverse chromosome and query order\n"
+" -r		reverse chromosome and query order\n".
+" -f 		treat files as list of coords file paths\n"
 unless @ARGV >= 1;
 my %options;
-getopts("rg:i:l:",\%options);
+getopts("rg:i:l:f",\%options);
 #PARAMETERS
 my $gap = $options{g} || 100; #max gap allowed for two alignments to be stiched together
 my $tmpdir = "/tmp";
 my $bedtools = "bedtools";
-my $debug = 0;
+my $debug = 1;
 my $minIdt = $options{i} || 90; #mininum identity between two sequences in a mapping, in percentage
 my $minLen2 = $options{l} || 50; #min length of alignment
 my $hpc_qsub = "qsub -S /bin/bash -V -l walltime=1:0:0 -l nodes=1:ppn=1 -l mem=2GB -A lc_kw -q laird ";
@@ -43,8 +44,17 @@ my $outputFile = File::Spec->catfile($tmpdir,rand($$).".mummer.unmerged.bed");
 open (my $fh,">",$outputFile) or die "open($outputFile): $!\n";
 warn "\@ARGV: @ARGV\n" if $debug == 1;
 print $fh "#CONTIG\tSTART\tEND\tCHR\tSTART\tEND\tQUERY_LENGTH\tREF_LENGTH\tIDENTITY\n";
-while(my $coord = shift @ARGV) {
-    &coord2bed($fh,$coord);
+if ($options{f}) {
+    my @fileList = `cat $ARGV[0]`;
+    chomp @fileList;
+    warn "No file\n" and exit unless @fileList;
+    while(my $coord = shift @fileList) {
+	&coord2bed($fh,$coord);
+    }
+} else {
+    while(my $coord = shift @ARGV) {
+	&coord2bed($fh,$coord);
+    }
 }
 close $fh;
 warn "reading coords done\n";
