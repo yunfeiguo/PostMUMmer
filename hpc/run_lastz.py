@@ -14,19 +14,21 @@ cleanQ = []
 submitInterval = 1 #number of seconds between qstat
 checkInterval = 1 #sec
 debug = False
-maxConcurrentLaird = 500
+maxConcurrentLaird = 100
 maxConcurrentBcl = 500
-maxConcurrentOther = 0
+maxConcurrentOther = 100
 jobReg = {} #record job queue, status, sentinel file path
-#chr_dir = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/hg38_chr/unmasked"
-#chrFile = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/GCA_000001405.15_GRCh38_full_analysis_set.fna"
-chrFile = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar.fa"
-chr_dir = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar_chr"
+#chr_dir = "/auto/rcf-proj/kw/yunfeigu/pacbio_reference/lastz/ref_hg38+decoy_query_hx1f4full_no_hg38+decoy.mummer/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar_chr"
+#chrFile = "/auto/rcf-proj/kw/yunfeigu/pacbio_reference/lastz/ref_hg38+decoy_query_hx1f4full_no_hg38+decoy.mummer/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar.fa"
+chr_dir = "~/proj_dir/pacbio_reference/data/yh_2.0_chrom"
+chrFile = "/home/rcf-02/yunfeigu/proj_dir/pacbio_reference/data/GCA_000004845.2_YH_2.0_genomic.fna"
+#chrFile = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar.fa"
+#chr_dir = "/home/yunfeiguo/database/hg_index/GRCh38_analysis/GRCh38_full_analysis_set_plus_decoy_hla.noMetaChar_chr"
 qsubLaird = "qsub -V -l walltime=199:59:0 -l nodes=1:ppn=1 -A lc_kw -q laird -l mem=2GB -S /bin/bash"
 qsubMain = "qsub -V -l walltime=23:59:0 -l nodes=1:ppn=1 -A lc_kw -l mem=2GB -S /bin/bash"
 qsubBcl = "qsub -V -cwd -l h_vmem=7G -S /bin/bash"
 #prototype of lastz options
-lastzOpt = "--notransition --gap=1000,1 --step=20 --ambiguous=iupac --format=maf --gappedthresh=1000000 --identity=80 --progress=10";
+lastzOpt = "--notransition --gap=1000,1 --step=20 --ambiguous=iupac --format=maf --gappedthresh=10000 --identity=80 --progress=10 --maxwordcount=1 --masking=0 ";
 cwd = os.getcwd()
 #noSleep = False
 noSleep = True
@@ -172,17 +174,18 @@ for j in range(0,len(query)):
     oneQuery = os.path.abspath(query[j])
     print(oneQuery)
     for i in allChr:
-        #if getJobCount('laird') < maxConcurrentLaird:
-        #    submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'laird', qsub = qsubLaird)
-        #elif getJobCount('other') < maxConcurrentOther:
-        #    submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'other', qsub = qsubMain)
-        if getJobCount('all.q') < maxConcurrentBcl:
-            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'all.q', qsub = qsubBcl)
+        if getJobCount('laird') < maxConcurrentLaird:
+            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'laird', qsub = qsubLaird)
+        elif getJobCount('other') < maxConcurrentOther:
+            submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'other', qsub = qsubMain)
+        #if getJobCount('all.q') < maxConcurrentBcl:
+        #    submitLastzJob(result_dir = result_dir, fa = oneQuery, qCount = j, rID = i, q = 'all.q', qsub = qsubBcl)
         else:
             if debug:
                 print("queuing")
             while True:
-		if getJobCount('all.q') < maxConcurrentBcl:
+		        #if getJobCount('all.q') < maxConcurrentBcl:
+                if getJobCount('laird') < maxConcurrentLaird or getJobCount('other') < maxConcurrentOther:
                     break
 clean()
 logging.info("All done")
