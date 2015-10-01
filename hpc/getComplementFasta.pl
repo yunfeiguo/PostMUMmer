@@ -22,5 +22,6 @@ my $complementBED = basename $bed.".complement.$minLen.bed";
 
 !system("cut -f 1,2 $fai | sort -k 1,1 -k2,2n > $genome") or die "cut $fai: $!\n";
 !system("$bedtools sort -i $bed > $sorted_bed") or die "bedtools sort: $!\n";
+#die("$bedtools complement -i $sorted_bed -g $genome | perl -ne '\@f=split;print if \$f[2]-\$f[1] >= $minLen' > $complementBED") or die "bedtools complement: $!\n";
 !system("$bedtools complement -i $sorted_bed -g $genome | perl -ne '\@f=split;print if \$f[2]-\$f[1] >= $minLen' > $complementBED") or die "bedtools complement: $!\n";
 !system("$bedtools getfasta -fi $fa -bed $complementBED -fo $outFa") or die "bedtools getfasta: $!\n";
